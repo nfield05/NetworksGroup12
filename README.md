@@ -2,9 +2,9 @@
 Java-based peer-to-peer file sharing system inspired by BitTorrent, implementing TCP communication, file piece exchange, and choking/unchoking mechanisms.
 
 # Team
-Ishaan Singh - peer state
-Nathan Field - configuration, piece storage, and logging
-Nicholas Borden - protocol messages and stream reading
+- Ishaan Singh - peer state
+- Nathan Field - configuration, piece storage, and logging
+- Nicholas Borden - protocol messages and stream reading
 
 # Midpoint Progress
 As of October 14, we have over 500 lines of Java source code. All current files in `src` compile together with Java 21.
