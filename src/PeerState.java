@@ -55,14 +55,14 @@ public class PeerState {
 
 
     // Initialize our bitfield based on whether we already have the file.
-    public void initializeLocalBitfield(boolean hasFile) {
+    public synchronized void initializeLocalBitfield(boolean hasFile) {
         for (int i = 0; i < localBitfield.length; i++) {
             localBitfield[i] = hasFile;
         }
     }
 
     // Update whether we have a particular piece.
-    public void updateLocalBitfield(int pieceIndex, boolean hasPiece) {
+    public synchronized void updateLocalBitfield(int pieceIndex, boolean hasPiece) {
         if (pieceIndex < 0 || pieceIndex >= localBitfield.length) {
             throw new IllegalArgumentException("Invalid piece index.");
         }
@@ -70,9 +70,38 @@ public class PeerState {
         localBitfield[pieceIndex] = hasPiece;
     }
 
+    // Pack our bitfield into bytes, piece 0 is the high bit of byte 0.
+    public synchronized byte[] getLocalBitfieldPayload() {
+        byte[] payload = new byte[(localBitfield.length + 7) / 8];
+
+        for (int i = 0; i < localBitfield.length; i++) {
+            if (localBitfield[i]) {
+                payload[i / 8] |= (byte) (0x80 >> (i % 8));
+            }
+        }
+
+        return payload;
+    }
+
+    // Turn a received BITFIELD payload into one boolean per piece.
+    public synchronized boolean[] bitfieldFromPayload(byte[] payload) {
+        if (payload == null || payload.length != (localBitfield.length + 7) / 8) {
+            throw new IllegalArgumentException("Invalid bitfield payload.");
+        }
+
+        boolean[] bitfield = new boolean[localBitfield.length];
+
+        for (int i = 0; i < bitfield.length; i++) {
+            bitfield[i] = (payload[i / 8] & (0x80 >> (i % 8))) != 0;
+        }
+
+        return bitfield;
+    }
+
     // Initialize state for a neighbor before their bitfield arrives.
-    public void registerNeighbor(int peerId) {
+    public synchronized void registerNeighbor(int peerId) {
         registeredNeighbors.add(peerId);
+        neighborBitfields.putIfAbsent(peerId, new boolean[localBitfield.length]);
         localInterest.putIfAbsent(peerId, false);
         remoteInterest.putIfAbsent(peerId, false);
         localChoke.putIfAbsent(peerId, true);
@@ -81,7 +110,7 @@ public class PeerState {
     }
 
     // Store a neighbor's bitfield when their BITFIELD message arrives.
-    public void updateNeighborBitfield(int peerId, boolean[] bitfield) {
+    public synchronized void updateNeighborBitfield(int peerId, boolean[] bitfield) {
         if (bitfield == null || bitfield.length != localBitfield.length) {
             throw new IllegalArgumentException("Invalid neighbor bitfield.");
         }
@@ -91,7 +120,7 @@ public class PeerState {
     }
 
     // Update whether a neighbor has a particular piece.
-    public void updateNeighborPiece(int peerId, int pieceIndex, boolean hasPiece) {
+    public synchronized void updateNeighborPiece(int peerId, int pieceIndex, boolean hasPiece) {
         requireNeighbor(peerId);
 
         if (pieceIndex < 0 || pieceIndex >= localBitfield.length) {
@@ -108,7 +137,7 @@ public class PeerState {
     }
 
     // Check whether we need any pieces this neighbor has.
-    public boolean calculateLocalInterest(int peerId) {
+    public synchronized boolean calculateLocalInterest(int peerId) {
         boolean[] neighborBitfield = neighborBitfields.get(peerId);
 
         if (neighborBitfield == null) {
@@ -127,35 +156,35 @@ public class PeerState {
     }
 
     // Update remote interest when an INTERESTED/NOT_INTERESTED message arrives.
-    public void updateRemoteInterest(int peerId, boolean interested) {
+    public synchronized void updateRemoteInterest(int peerId, boolean interested) {
         requireNeighbor(peerId);
         remoteInterest.put(peerId, interested);
     }
 
     // Update our choking state for a neighbor.
-    public void chokePeer(int peerId) {
+    public synchronized void chokePeer(int peerId) {
         requireNeighbor(peerId);
         localChoke.put(peerId, true);
     }
 
-    public void unchokePeer(int peerId) {
+    public synchronized void unchokePeer(int peerId) {
         requireNeighbor(peerId);
         localChoke.put(peerId, false);
     }
 
     // Update whether a neighbor is choking us.
-    public void neighborChokesUs(int peerId) {
+    public synchronized void neighborChokesUs(int peerId) {
         requireNeighbor(peerId);
         remoteChoke.put(peerId, true);
     }
 
-    public void neighborUnchokesUs(int peerId) {
+    public synchronized void neighborUnchokesUs(int peerId) {
         requireNeighbor(peerId);
         remoteChoke.put(peerId, false);
     }
 
     // Track which neighbor we requested each piece from.
-    public boolean addPendingPiece(int pieceIndex, int peerId) {
+    public synchronized boolean addPendingPiece(int pieceIndex, int peerId) {
         requireNeighbor(peerId);
 
         if (pieceIndex < 0 || pieceIndex >= localBitfield.length) {
@@ -171,7 +200,7 @@ public class PeerState {
     }
 
     // Call after a received piece has been successfully saved.
-    public void completePieceDownload(
+    public synchronized void completePieceDownload(
             int pieceIndex, int senderPeerId, long bytesReceived) {
 
         requireNeighbor(senderPeerId);
@@ -195,23 +224,23 @@ public class PeerState {
     }
 
     // Reset download counters at the end of an unchoking interval.
-    public void resetBytesReceived() {
+    public synchronized void resetBytesReceived() {
         for (Integer peerId : bytesReceivedThisInterval.keySet()) {
             bytesReceivedThisInterval.put(peerId, 0L);
         }
     }
 
     // Getters return copies where mutable data is involved.
-    public boolean[] getLocalBitfield() {
+    public synchronized boolean[] getLocalBitfield() {
         return localBitfield.clone();
     }
 
-    public boolean[] getNeighborBitfield(int peerId) {
+    public synchronized boolean[] getNeighborBitfield(int peerId) {
         boolean[] bitfield = neighborBitfields.get(peerId);
         return bitfield == null ? null : bitfield.clone();
     }
 
-    public Map<Integer, boolean[]> getNeighborBitfields() {
+    public synchronized Map<Integer, boolean[]> getNeighborBitfields() {
         Map<Integer, boolean[]> copy = new HashMap<>();
 
         for (Map.Entry<Integer, boolean[]> entry : neighborBitfields.entrySet()) {
@@ -221,27 +250,27 @@ public class PeerState {
         return copy;
     }
 
-    public boolean getLocalInterest(int peerId) {
+    public synchronized boolean getLocalInterest(int peerId) {
         return localInterest.getOrDefault(peerId, false);
     }
 
-    public boolean getRemoteInterest(int peerId) {
+    public synchronized boolean getRemoteInterest(int peerId) {
         return remoteInterest.getOrDefault(peerId, false);
     }
 
-    public boolean isChokingPeer(int peerId) {
+    public synchronized boolean isChokingPeer(int peerId) {
         return localChoke.getOrDefault(peerId, true);
     }
 
-    public boolean isChokedByPeer(int peerId) {
+    public synchronized boolean isChokedByPeer(int peerId) {
         return remoteChoke.getOrDefault(peerId, true);
     }
 
-    public Map<Integer, Integer> getPendingPieces() {
+    public synchronized Map<Integer, Integer> getPendingPieces() {
         return new HashMap<>(pendingPieces);
     }
 
-    public Map<Integer, Long> getBytesReceivedThisInterval() {
+    public synchronized Map<Integer, Long> getBytesReceivedThisInterval() {
         return new HashMap<>(bytesReceivedThisInterval);
     }
 
