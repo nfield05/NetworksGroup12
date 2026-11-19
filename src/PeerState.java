@@ -1,7 +1,10 @@
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class PeerState {
 
@@ -197,6 +200,36 @@ public class PeerState {
 
         pendingPieces.put(pieceIndex, peerId);
         return true;
+    }
+
+    // Picks a random piece this neighbor has that we don't have
+    // and haven't requested, and reserves it. Returns -1 if there is none.
+    public synchronized int reserveRandomPiece(int peerId) {
+        requireNeighbor(peerId);
+
+        boolean[] neighborBitfield = neighborBitfields.get(peerId);
+        List<Integer> candidates = new ArrayList<>();
+
+        for (int i = 0; i < localBitfield.length; i++) {
+            if (!localBitfield[i] && neighborBitfield[i]
+                    && !pendingPieces.containsKey(i)) {
+                candidates.add(i);
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            return -1;
+        }
+
+        int pieceIndex = candidates.get(
+            ThreadLocalRandom.current().nextInt(candidates.size()));
+        pendingPieces.put(pieceIndex, peerId);
+        return pieceIndex;
+    }
+
+    // Drops pending requests to a peer that choked us or left.
+    public synchronized void releasePendingFrom(int peerId) {
+        pendingPieces.values().removeIf(id -> id == peerId);
     }
 
     // Call after a received piece has been successfully saved.

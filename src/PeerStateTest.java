@@ -19,6 +19,9 @@ public class PeerStateTest {
         testPendingPiecesAndDownload();
         testByteCounterReset();
         testDefensiveCopies();
+        testBitfieldPayload();
+        testReserveAndRelease();
+        testEmptyNeighborBitfield();
 
         System.out.println("All " + testsRun + " checks passed.");
     }
@@ -163,6 +166,60 @@ public class PeerStateTest {
 
         assertArrayEquals(new boolean[] {true, false},
                 state.getNeighborBitfield(1009), "Neighbor bitfield getter copied");
+    }
+
+    private static void testBitfieldPayload() {
+        PeerState state = new PeerState(10);
+        state.updateLocalBitfield(0, true);
+        state.updateLocalBitfield(9, true);
+
+        byte[] payload = state.getLocalBitfieldPayload();
+        assertEquals(2, payload.length, "Payload length");
+        assertEquals((byte) 0x80, payload[0], "Piece 0 is the high bit");
+        assertEquals((byte) 0x40, payload[1], "Piece 9 is bit 1 of byte 1");
+
+        assertArrayEquals(state.getLocalBitfield(),
+                state.bitfieldFromPayload(payload), "Payload round trip");
+
+        boolean threw = false;
+        try {
+            state.bitfieldFromPayload(new byte[3]);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        assertTrue(threw, "Wrong-length payload rejected");
+    }
+
+    private static void testReserveAndRelease() {
+        PeerState state = new PeerState(3);
+        state.updateLocalBitfield(0, true);
+        state.registerNeighbor(2001);
+        state.registerNeighbor(2002);
+        state.updateNeighborBitfield(2001, new boolean[] {true, true, false});
+        state.updateNeighborBitfield(2002, new boolean[] {true, true, true});
+
+        // Only piece 1 is available from 2001
+        assertEquals(1, state.reserveRandomPiece(2001), "Reserve only needed piece");
+        assertEquals(Integer.valueOf(2001), state.getPendingPieces().get(1),
+                "Reservation recorded");
+        assertEquals(-1, state.reserveRandomPiece(2001), "Nothing left from 2001");
+
+        // Piece 1 is already pending so 2002 can only give piece 2
+        assertEquals(2, state.reserveRandomPiece(2002), "Pending piece skipped");
+
+        state.releasePendingFrom(2001);
+        assertFalse(state.getPendingPieces().containsKey(1), "Release removes 2001's piece");
+        assertTrue(state.getPendingPieces().containsKey(2), "Release keeps 2002's piece");
+        assertEquals(1, state.reserveRandomPiece(2002), "Released piece can be reserved again");
+    }
+
+    private static void testEmptyNeighborBitfield() {
+        PeerState state = new PeerState(2);
+        state.registerNeighbor(2003);
+
+        assertFalse(state.calculateLocalInterest(2003), "No interest before bitfield");
+        state.updateNeighborPiece(2003, 1, true);
+        assertTrue(state.calculateLocalInterest(2003), "Interest after have");
     }
 
     private static void assertTrue(boolean condition, String message) {
